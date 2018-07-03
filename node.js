@@ -26,6 +26,22 @@ function toMilitaryTime(time) {
     return "p" == n && 12 > r ? r += 12 : "a" == n && 12 == r && (r -= 12), [r, a, e];
 }
 
+function assignRoom() {
+    let ip = require('os').networkInterfaces().apcli0[0].address;
+    let mac = require('os').networkInterfaces().apcli0[0].mac;
+
+    switch (ip) {
+        case '192.168.0.202':
+            room = 'Kitchen';
+            break;
+        case '192.168.0.201':
+            room = 'Bathroom';
+            break;
+        default:
+            error('IP Address is not bound to a room: ' + ip + '.\n Hardware ID is: ' + mac.substr(mac.length - 4));
+    }
+}
+
 const error = function(msg) {
     requestify.post('http://arlo.bounceme.net:8082/', {
         error: room + ' motion sensor: ' + msg
@@ -71,23 +87,7 @@ function isAfterSunrise() {
     else return false;
 }
 
-function assignRoom() {
-    let ip = require('os').networkInterfaces().apcli0[0].address;
-    let mac = require('os').networkInterfaces().apcli0[0].mac;
-
-    switch (ip) {
-        case '192.168.0.202':
-            room = 'Kitchen';
-            break;
-        case '192.168.0.201':
-            room = 'Bathroom';
-            break;
-        default:
-            error('IP Address is not bound to a room: ' + ip + '.\n Hardware ID is: ' + mac.substr(mac.length - 4));
-    }
-}
-
-function init() {
+function init(cb) {
     if (hue.ready) {
         assignRoom();
         exec('fast-gpio set-input 11');
@@ -99,8 +99,8 @@ function init() {
             hue.light.off('Main ' + room);
             log(room + ' sensor is ready');
         }, 500);
-
         delaying = false;
+        if (typeof cb == 'function') cb();
     } else {
         setTimeout(() => {
             init();
@@ -112,10 +112,20 @@ function isOnline() {
     return new Promise(resolve => {
         exec('ping -c 1 1.1.1.1', (err, stdout) => {
             if (err) error(err);
-            if (!stdout.includes('0% packet loss')) {
-                exec('reboot -f');
-            } else {
+            if (stdout.includes('0% packet loss')) {
                 resolve(true);
+            } else {
+                log('Device has gone offline. Restarting network server...');
+                exec('service network restart', () => {
+                    setTimeout(() => {
+                        isOnline().then(result => {
+                            if (!result) {
+                                log('Restarting network service didn\'t work. Forcing a reboot');
+                                exec('reboot -f');
+                            }
+                        });
+                    }, 2000);
+                });
             }
         });
     });
@@ -203,7 +213,7 @@ setInterval(_ => {
 
 setInterval(_ => {
     isOnline();
-}, 5 * 60 * 1000);
+}, 2 * 60 * 1000);
 
 app.post('/', function(req, res) {
     let body = req.body;
@@ -213,7 +223,7 @@ app.post('/', function(req, res) {
         setTimeout(() => {
             exec('reboot -f');
         }, 1000);
-    } else if(body.reboot !== secret.pass) {
+    } else if (body.reboot !== secret.pass) {
         error('Incorrect password for remote reboot');
     }
 
@@ -266,7 +276,8 @@ app.post('/', function(req, res) {
 
 
 app.listen(8080, (err) => {
-    init();
-    if (err) error('Express failed to start the web server');
-    log('Listening on port 8080');
+    init(() => {
+        if (err) error('Express failed to start the web server');
+        log('Listening on port 8080');
+    });
 });
