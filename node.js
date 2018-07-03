@@ -48,7 +48,7 @@ const error = function(msg) {
     });
 
     requestify.post('http://arlo.bounceme.net:8082/', {
-        speak: 'Something went wrong with the ' + room + ' motion sensor: ' + msg
+        speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
     });
 }
 
@@ -57,6 +57,12 @@ const log = function(msg) {
         log: room + ' motion sensor: ' + msg
     });
     console.log(msg);
+}
+
+function speak(msg) {
+    requestify.post('http://arlo.bounceme.net:8082/', {
+        say: '(noheader)(v:Microsoft Eva Mobile)' + msg
+    });
 }
 
 function getSunTimes() {
@@ -97,7 +103,8 @@ function init(cb) {
         hue.light.on('Main ' + room);
         setTimeout(() => {
             hue.light.off('Main ' + room);
-            log(room + ' sensor is ready');
+            log(room + ' motion sensor is ready');
+            speak(room + ' motion sensor is ready');
         }, 500);
         delaying = false;
         if (typeof cb == 'function') cb();
