@@ -10,20 +10,32 @@ const SunCalc = require('suncalc');
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
+let time;
 let sunrise, sunset, goldenHour, goldenHourEnd;
 let lat = 42.562986, long = -92.499992;
 
 let prevState = false;
 let delaying, delayTimeout, delayInterval, room;
 
+function getTime() {
+    return new Promise(resolve => {
+        requestify.get('https://www.amdoren.com/api/timezone.php?api_key=4hMwxwRs5UmvwMxSpxPwXaHzFrdV4f&loc=USA,+Iowa,+Waterloo').then(function(response) {
+            time = response.getBody().time.split(' ')[1];
+            resolve(response.getBody().time.split(' ')[1]);
+        });
+    });
+}
+
 function replaceAll(str, find, replace) {
     'use strict';
     return String.raw`${str}`.replace(new RegExp(find.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, '\\$1'), 'g'), replace);
 }
 
-function toMilitaryTime(time) {
-    var o = time.match(/(\d+):(\d+):(\d+) (\w)/), r = +o[1], a = +o[2], e = +o[3], n = o[4].toLowerCase();
-    return "p" == n && 12 > r ? r += 12 : "a" == n && 12 == r && (r -= 12), [r, a, e];
+var _slicedToArray = function() { function sliceIterator(arr, i) { var _arr = []; var _n = !0; var _d = !1; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = !0) { _arr.push(_s.value); if (i && _arr.length === i) break } } catch (err) { _d = !0; _e = err } finally { try { if (!_n && _i["return"]) _i["return"]() } finally { if (_d) throw _e } } return _arr } return function(arr, i) { if (Array.isArray(arr)) { return arr } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i) } else { throw new TypeError("Invalid attempt to destructure non-iterable instance") } } }();
+function toMilitaryTime(time12h) {
+    var _time12h$split = time12h.split(' '), _time12h$split2 = _slicedToArray(_time12h$split, 2), time = _time12h$split2[0], modifier = _time12h$split2[1]; var _time$split = time.split(':'), _time$split2 = _slicedToArray(_time$split, 2), hours = _time$split2[0], minutes = _time$split2[1]; if (hours === '12') { hours = '00' }
+    if (modifier === 'PM') { hours = parseInt(hours, 10) + 12 }
+    return [hours, minutes]
 }
 
 function assignRoom() {
@@ -61,7 +73,7 @@ const log = function(msg) {
 
 function speak(msg) {
     requestify.post('http://arlo.bounceme.net:8082/', {
-        say: '(noheader)(v:Microsoft Eva Mobile)' + msg
+        say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
     });
 }
 
@@ -77,19 +89,19 @@ function getSunTimes() {
 }
 
 function isGettingDark() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(goldenHour)[0]) return true;
+    if (time && time.split(':')[0] > toMilitaryTime(goldenHour)[0]) return true;
     else return false;
 }
 function isGettingLight() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(goldenHourEnd)[0]) return true;
+    if (time && time.split(':')[0] > toMilitaryTime(goldenHourEnd)[0]) return true;
     else return false;
 }
 function isAfterSunset() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(sunset)[0]) return true;
+    if (time && time.split(':')[0] > toMilitaryTime(sunset)[0]) return true;
     else return false;
 }
 function isAfterSunrise() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(sunrise)[0]) return true;
+    if (time && time.split(':')[0] > toMilitaryTime(sunrise)[0]) return true;
     else return false;
 }
 
@@ -192,28 +204,32 @@ setInterval(() => {
                     prevState = false;
                 }
             });
-        // Intermediate brightness when it's getting dark outside
-        if ((isAfterSunrise() && isGettingDark()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
+        
+            // Intermediate brightness when it's getting dark outside
+            if ((isAfterSunrise() && isGettingDark()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
 
-        // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
-        if ((isAfterSunrise() && !isGettingDark()) && (room !== 'Bathroom')) delaying = true;
+            // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
+            if ((isAfterSunrise() && !isGettingDark()) && (room !== 'Bathroom')) delaying = true;
 
-        // If it's past 2AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
-        if ((isAfterSunset() && !isGettingLight() && toMilitaryTime(new Date.toLocaleTimeString().split(':'))[0] > 2)) hue.light.brightness('Main ' + room, 25);
+            // If it's past 2AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
+            if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 2))) hue.light.brightness('Main ' + room, 25);
 
-        // But if it's not yet passed 2AM, keep the lights bright. Someone might still be awake and using them.
-        else if ((isAfterSunset() && !isGettingLight())) hue.light.brightness('Main ' + room, 75);
+            // But if it's not yet passed 2AM, keep the lights bright. Someone might still be awake and using them.
+            else if ((isAfterSunset() && !isGettingLight())) hue.light.brightness('Main ' + room, 75);
 
-        // It's almost morning, intermediate brightness
-        if ((isAfterSunset() && isGettingLight())) hue.light.brightness('Main ' + room, 50);
-
+            // It's almost morning, intermediate brightness
+            if ((isAfterSunset() && isGettingLight())) hue.light.brightness('Main ' + room, 50);
     }
 }, 1000);
 
+setInterval(() => {
+    getTime();
+}, Math.floor(Math.random() * (11000 - 9000 + 1) + 9000));
+
 
 setInterval(_ => {
-    if (new Date().toLocaleTimeString().split(':')[0] == 3) delaying = false;
-    if (new Date().toLocaleTimeString().split(':')[0] == 12) {
+    if (time && time[0] == 3) delaying = false;
+    if (time && time[0] == 12) {
         getSunTimes();
     }
 }, 60 * 1000);
@@ -231,7 +247,7 @@ app.post('/', function(req, res) {
             exec('reboot -f');
         }, 1000);
     } else if (body.reboot !== secret.pass) {
-        error('Incorrect password for remote reboot');
+        log('Incorrect password for remote reboot');
     }
 
     if (body.keepon) {

@@ -5,6 +5,21 @@ const HueApi = hue.HueApi;
 const state = hue.lightState.create();
 const requestify = require('requestify');
 let readyState = false;
+let room;
+
+let ip = require('os').networkInterfaces().apcli0[0].address;
+let mac = require('os').networkInterfaces().apcli0[0].mac;
+
+switch (ip) {
+    case '192.168.0.202':
+        room = 'Kitchen';
+        break;
+    case '192.168.0.201':
+        room = 'Bathroom';
+        break;
+    default:
+        error('IP Address is not bound to a room: ' + ip + '.\n Hardware ID is: ' + mac.substr(mac.length - 4));
+}
 
 const Win = {
     log: function(msg) {/* 
@@ -15,7 +30,7 @@ const Win = {
     },
     error: function(msg) {
         requestify.post('http://arlo.bounceme.net:8082/', {
-            error: 'Bathroom motion sensor: ' + msg
+            error: room + ' motion sensor: ' + msg
         });
         console.error(msg);
     }
@@ -23,12 +38,17 @@ const Win = {
 
 function log(msg) {
     requestify.post('http://arlo.bounceme.net:8082/', {
-        log: 'Bathroom motion sensor: ' + msg
+        log: room + ' motion sensor: ' + msg
     });
     console.log(msg);
 }
 
-
+function error(msg) {
+    /* requestify.post('http://arlo.bounceme.net:8082/', {
+        error: room + ' motion sensor: ' + msg
+    }); */
+    console.error(msg);
+}
 
 let username = "t1E8HGeK6iC4K6zbCMtIwaqY0Vb-xht4BMaqv266",
     api,
@@ -159,6 +179,21 @@ const control = {
     },
     light: {
         get: {
+            isOn: function(lightname) {
+                return new Promise((resolve, reject) => {
+                    api.lights()
+                        .then((result) => {
+                            for (var i in result.lights) {
+                                if (result.lights.hasOwnProperty(i)) {
+                                    if (result.lights[i].id == idFromName(lightname, 'light')) {
+                                        resolve(result.lights[i].state.on);
+                                    }
+                                }
+                            }
+                        })
+                        .done();
+                })
+            },
             brightness: function(lightname) {
                 return new Promise((resolve, reject) => {
                     api.lights()
@@ -215,12 +250,17 @@ const control = {
             }
         },
         brightness: function(name, percentage) {
-            api.setLightState(idFromName(name), state.brightness(percentage))
-                .then(() => {
-                    log(name + ' brightness changed to ' + percentage);
-                }).fail(() => {
-                    error(name + ' failed to change brightness state');
-                }).done();
+            control.light.get.isOn(name)
+                .then(result => {
+                    if (result) {
+                        api.setLightState(idFromName(name), state.brightness(percentage))
+                            .then(() => {
+                                log(name + ' brightness changed to ' + percentage);
+                            }).fail(() => {
+                                error(name + ' failed to change brightness state');
+                            }).done();
+                    }
+                })
         },
         on: function(name) {
             api.setLightState(idFromName(name), state.on())
@@ -341,7 +381,7 @@ setInterval(_ => {
             if (err) throw Error(err)
         });
     }
-    catch(err) {
+    catch (err) {
         connect();
     }
 }, 5 * 60 * 1000)

@@ -1,34 +1,31 @@
+'use strict';
 let sunrise, sunset;
 let lat = 42.562986, long = -92.499992;
 const SunCalc = require('suncalc');
 const requestify = require('requestify');
+let time;
 
-function toMilitaryTime(time) {
-    var o = time.match(/(\d+):(\d+):(\d+) (\w)/), r = +o[1], a = +o[2], e = +o[3], n = o[4].toLowerCase();
-    return "p" == n && 12 > r ? r += 12 : "a" == n && 12 == r && (r -= 12), [ r, a, e ];
-}
 
-function getSunsetSunrise() {
+function getSunTimes() {
     return new Promise(resolve => {
         let sunData = SunCalc.getTimes(new Date(), lat, long);
-        sunset = sunData.goldenHour.toLocaleTimeString();
-        sunrise = sunData.goldenHourEnd.toLocaleTimeString();
+        console.log(sunData)
+        console.log(toMilitaryTime(sunData.goldenHour.toLocaleTimeString()[0]))
+        console.log(sunData.goldenHourEnd.toLocaleTimeString())
+        console.log(sunData.sunset.toLocaleTimeString())
+        console.log(sunData.sunrise.toLocaleTimeString())
         resolve();
     });
 }
 
-function isAfterSunset() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(sunset)[0]) return true;
-    else return false;
+function getTime() {
+    return new Promise(resolve => {
+        requestify.get('https://www.amdoren.com/api/timezone.php?api_key=4hMwxwRs5UmvwMxSpxPwXaHzFrdV4f&loc=USA,+Iowa,+Waterloo').then(function(response) {
+            time = response.getBody().time.split(' ')[1];
+            resolve(response.getBody().time.split(' ')[1]);
+        });
+    });
 }
 
-function isAfterSunrise() {
-    if (toMilitaryTime(new Date().toLocaleTimeString())[0] > toMilitaryTime(sunrise)[0]) return true;
-    else return false;
-}
 
-getSunsetSunrise()
-    .then(_ => {
-        console.log(isAfterSunrise());
-        console.log(isAfterSunset());
-})
+console.log(toMilitaryTime('10:00 PM'));
