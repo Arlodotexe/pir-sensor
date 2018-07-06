@@ -3,18 +3,18 @@
 const hue = require("node-hue-api");
 const HueApi = hue.HueApi;
 const state = hue.lightState.create();
+const secret = require('./secret');
 const requestify = require('requestify');
-let readyState = false;
 let room;
 
 let ip = require('os').networkInterfaces().apcli0[0].address;
 let mac = require('os').networkInterfaces().apcli0[0].mac;
 
 switch (ip) {
-    case '192.168.0.202':
+    case secret.devices[3].ip:
         room = 'Kitchen';
         break;
-    case '192.168.0.201':
+    case secret.devices[2].ip:
         room = 'Bathroom';
         break;
     default:
@@ -22,14 +22,11 @@ switch (ip) {
 }
 
 const Win = {
-    log: function(msg) {/* 
-        requestify.post('http://arlo.bounceme.net:8082/', {
-            log: 'Bathroom motion sensor: ' + msg
-        }); */
+    log: function(msg) {
         console.log(msg);
     },
     error: function(msg) {
-        requestify.post('http://arlo.bounceme.net:8082/', {
+        requestify.post(secret.mmserverAddress, {
             error: room + ' motion sensor: ' + msg
         });
         console.error(msg);
@@ -37,20 +34,17 @@ const Win = {
 }
 
 function log(msg) {
-    requestify.post('http://arlo.bounceme.net:8082/', {
+    requestify.post(secret.mmserverAddress, {
         log: room + ' motion sensor: ' + msg
     });
     console.log(msg);
 }
 
 function error(msg) {
-    /* requestify.post('http://arlo.bounceme.net:8082/', {
-        error: room + ' motion sensor: ' + msg
-    }); */
     console.error(msg);
 }
 
-let username = "t1E8HGeK6iC4K6zbCMtIwaqY0Vb-xht4BMaqv266",
+let username = secret.hueUsername,
     api,
     userDescription = "nodejs";
 
@@ -72,7 +66,6 @@ function connect() {
 
         var displayResult = function(result) {
             Win.log('Hue bridge connected');
-            readyState = true;
             control.ready = true;
         };
         api.config().then(displayResult).done();
