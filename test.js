@@ -1,31 +1,24 @@
 'use strict';
-let sunrise, sunset;
-let lat = 42.562986, long = -92.499992;
-const SunCalc = require('suncalc');
+let sunrise, sunset, goldenHour, goldenHourEnd;
 const requestify = require('requestify');
-let time;
 
 
 function getSunTimes() {
     return new Promise(resolve => {
-        let sunData = SunCalc.getTimes(new Date(), lat, long);
-        console.log(sunData)
-        console.log(toMilitaryTime(sunData.goldenHour.toLocaleTimeString()[0]))
-        console.log(sunData.goldenHourEnd.toLocaleTimeString())
-        console.log(sunData.sunset.toLocaleTimeString())
-        console.log(sunData.sunrise.toLocaleTimeString())
-        resolve();
-    });
-}
-
-function getTime() {
-    return new Promise(resolve => {
-        requestify.get('https://www.amdoren.com/api/timezone.php?api_key=4hMwxwRs5UmvwMxSpxPwXaHzFrdV4f&loc=USA,+Iowa,+Waterloo').then(function(response) {
-            time = response.getBody().time.split(' ')[1];
-            resolve(response.getBody().time.split(' ')[1]);
+        requestify.get('http://192.168.0.100:8082/sundata').then(function(response) {
+            body = JSON.parse(response.body);
+            sunset = body.sunset;
+            sunrise = body.sunrise;
+            goldenHour = body.goldenHour;
+            goldenHourEnd = body.goldenHourEnd;
+            console.log('sun times: ', body);
+            resolve();
         });
     });
 }
 
+getSunTimes()
+    .then(function() {
+        console.log(sunrise, sunset, goldenHour, goldenHourEnd);
+    })
 
-console.log(toMilitaryTime('10:00 PM'));

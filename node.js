@@ -4,9 +4,8 @@ const hue = require('./hue');
 const requestify = require('requestify');
 const express = require('express'), app = express();
 const bodyParser = require('body-parser');
+const http = require('http');
 const secret = require('./secret');
-const SunCalc = require('suncalc');
-
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
@@ -17,14 +16,68 @@ let lat = 42.562986, long = -92.499992;
 let prevState = false;
 let delaying, delayTimeout, delayInterval, room;
 
+function init(cb) {
+    if (hue.ready) {
+        assignRoom();
+        exec('fast-gpio set-input 11');
+        log('Connected to Philips Hue Bridge');
+        getSunTimes().then(_ => {
+            log('Retrieved sun data and timings');
+            maintainBrightness();
+        });
+
+        hue.light.on('Main ' + room);
+        setTimeout(() => {
+            hue.light.off('Main ' + room);
+            speak(room + ' motion sensor is ready');
+        }, 500);
+        delaying = false;
+        lightPresence();
+        if (typeof cb == 'function') cb();
+    } else {
+        setTimeout(() => {
+            init();
+        }, 200);
+    }
+}
+
 function getTime() {
     return new Promise(resolve => {
-        requestify.get('https://www.amdoren.com/api/timezone.php?api_key=4hMwxwRs5UmvwMxSpxPwXaHzFrdV4f&loc=USA,+Iowa,+Waterloo').then(function(response) {
-            time = response.getBody().time.split(' ')[1];
-            resolve(response.getBody().time.split(' ')[1]);
+        http.get(secret.mmserverAddress + '/time', function(res) {
+            res.setEncoding('utf8');
+            let rawData = '';
+            res.on('data', (chunk) => { rawData += chunk; });
+
+            res.on('end', () => {
+                time = JSON.parse(rawData);
+            });
+            resolve(time);
         });
     });
 }
+
+function getSunTimes() {
+    return new Promise(resolve => {
+        http.get(secret.mmserverAddress + '/sundata', function(res) {
+            res.setEncoding('utf8');
+            let rawData = '';
+            res.on('data', (chunk) => { rawData += chunk; });
+
+            res.on('end', () => {
+                let body = JSON.parse(rawData);
+
+                sunset = body.sunset;
+                sunrise = body.sunrise;
+                goldenHour = body.goldenHour;
+                goldenHourEnd = body.goldenHourEnd;
+                resolve();
+            });
+        });
+    });
+}
+
+getTime();
+getSunTimes();
 
 function replaceAll(str, find, replace) {
     'use strict';
@@ -33,7 +86,7 @@ function replaceAll(str, find, replace) {
 
 var _slicedToArray = function() { function sliceIterator(arr, i) { var _arr = []; var _n = !0; var _d = !1; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = !0) { _arr.push(_s.value); if (i && _arr.length === i) break } } catch (err) { _d = !0; _e = err } finally { try { if (!_n && _i["return"]) _i["return"]() } finally { if (_d) throw _e } } return _arr } return function(arr, i) { if (Array.isArray(arr)) { return arr } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i) } else { throw new TypeError("Invalid attempt to destructure non-iterable instance") } } }();
 function toMilitaryTime(time12h) {
-    var _time12h$split = time12h.split(' '), _time12h$split2 = _slicedToArray(_time12h$split, 2), time = _time12h$split2[0], modifier = _time12h$split2[1]; var _time$split = time.split(':'), _time$split2 = _slicedToArray(_time$split, 2), hours = _time$split2[0], minutes = _time$split2[1]; if (hours === '12') { hours = '00' }
+    var _time12h$split = time12h.split(' '), _time12h$split2 = _slicedToArray(_time12h$split, 2), time = _time12h$split2[0], modifier = _time12h$split2[1]; var _time$split = time, _time$split2 = _slicedToArray(_time$split, 2), hours = _time$split2[0], minutes = _time$split2[1]; if (hours === '12') { hours = '00' }
     if (modifier === 'PM') { hours = parseInt(hours, 10) + 12 }
     return [hours, minutes]
 }
@@ -55,87 +108,101 @@ function assignRoom() {
 }
 
 const error = function(msg) {
-    requestify.post('http://arlo.bounceme.net:8082/', {
-        error: room + ' motion sensor: ' + msg
+    console.trace(msg);
+    requestify.post(secret.mmserverAddress, {
+        error: '(silent)' + room + ' motion sensor: ' + msg
     });
 
-    requestify.post('http://arlo.bounceme.net:8082/', {
+    requestify.post(secret.mmserverAddress, {
         speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
     });
 }
 
 const log = function(msg) {
-    requestify.post('http://arlo.bounceme.net:8082/', {
+    requestify.post(secret.mmserverAddress, {
         log: room + ' motion sensor: ' + msg
     });
     console.log(msg);
 }
 
 function speak(msg) {
-    requestify.post('http://arlo.bounceme.net:8082/', {
+    requestify.post(secret.mmserverAddress, {
         say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
     });
 }
 
-function getSunTimes() {
-    return new Promise(resolve => {
-        let sunData = SunCalc.getTimes(new Date(), lat, long);
-        goldenHour = sunData.goldenHour.toLocaleTimeString();
-        goldenHourEnd = sunData.goldenHourEnd.toLocaleTimeString();
-        sunset = sunData.sunset.toLocaleTimeString();
-        sunrise = sunData.sunrise.toLocaleTimeString();
-        resolve();
-    });
-}
-
 function isGettingDark() {
-    if (time && time.split(':')[0] > toMilitaryTime(goldenHour)[0]) return true;
+    if (time && goldenHour && (time[0] > goldenHour[0] && time[1] > goldenHour[1]) && !isAfterSunset()) return true;
     else return false;
 }
 function isGettingLight() {
-    if (time && time.split(':')[0] > toMilitaryTime(goldenHourEnd)[0]) return true;
+    if (time && goldenHourEnd && (time[0] > goldenHourEnd[0] && time[1] > goldenHourEnd[1]) && !isAfterSunrise()) return true;
     else return false;
 }
 function isAfterSunset() {
-    if (time && time.split(':')[0] > toMilitaryTime(sunset)[0]) return true;
+    if (time && sunset && (time[0] > sunset[0] && time[0] < sunrise[0])) return true;
     else return false;
 }
 function isAfterSunrise() {
-    if (time && time.split(':')[0] > toMilitaryTime(sunrise)[0]) return true;
+    if (time && sunrise && (time[0] > sunrise[0] && time[0] < sunset[0])) return true;
     else return false;
 }
 
-function init(cb) {
-    if (hue.ready) {
-        assignRoom();
-        exec('fast-gpio set-input 11');
-        log('Connected to Philips Hue Bridge');
-        getSunTimes().then(_ => { log('Retrieved sunset, sunrise, and golden hour times') });
-
-        hue.light.on('Main ' + room);
+function blink(light) {
+    return new Promise(resolve => {
+        hue.light.off('Main ' + light);
         setTimeout(() => {
-            hue.light.off('Main ' + room);
-            log(room + ' motion sensor is ready');
-            speak(room + ' motion sensor is ready');
+            hue.light.on('Main ' + light);
+            resolve(light);
         }, 500);
-        delaying = false;
-        if (typeof cb == 'function') cb();
-    } else {
-        setTimeout(() => {
-            init();
-        }, 200);
+    });
+}
+
+function debounce(func, wait, immediate) {
+    var timeout;
+    return function() {
+        var context = this, args = arguments;
+        var later = function() {
+            timeout = null;
+            if (!immediate) func.apply(context, args);
+        };
+        var callNow = immediate && !timeout;
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+        if (callNow) func.apply(context, args);
+    };
+};
+
+function maintainBrightness() {
+    // Intermediate brightness when it's getting dark outside
+    if ((isAfterSunrise() && isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
+
+    // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
+    /* if ((isAfterSunrise() && !isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) delaying = true; */
+
+    // If it's past 2AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
+    if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 2))) {
+        hue.light.brightness('Main ' + room, 25);
     }
+
+    // But if it's not yet passed 2AM, keep the lights bright. Someone might still be awake and using them.
+    else if ((isAfterSunset() && !isGettingLight())) {
+        hue.light.brightness('Main ' + room, 75);
+    }
+
+    // It's almost morning, intermediate brightness
+    if ((isAfterSunset() && isGettingLight() && !isAfterSunrise())) hue.light.brightness('Main ' + room, 50);
 }
 
 function isOnline() {
     return new Promise(resolve => {
-        exec('ping -c 1 1.1.1.1', (err, stdout) => {
+        debounce(exec('ping -c 1 1.1.1.1', (err, stdout) => {
             if (err) error(err);
             if (stdout.includes('0% packet loss')) {
                 resolve(true);
             } else {
                 log('Device has gone offline. Restarting network server...');
-                exec('service network restart', () => {
+                debounce(exec('service network restart', () => {
                     setTimeout(() => {
                         isOnline().then(result => {
                             if (!result) {
@@ -144,9 +211,9 @@ function isOnline() {
                             }
                         });
                     }, 2000);
-                });
+                }), 5000);
             }
-        });
+        }), 5000);
     });
 }
 
@@ -155,7 +222,7 @@ function hasPresence() {
         exec('fast-gpio read 11', (err, stdout) => {
             if (err) error(err);
             stdout = replaceAll(stdout, '> Read GPIO11:', '');
-            console.log('state: ' + stdout);
+            console.log('Presence: ' + stdout);
             if (stdout.includes('1')) {
                 resolve(true)
             }
@@ -190,37 +257,27 @@ function delayFor(initialDelay, secondaryDelay) {
     }, 5000);
 }
 
-setInterval(() => {
+function lightPresence() {
     if (hue.ready) {
         hasPresence()
             .then((result) => {
-                if (delaying == false && result && prevState == false) {
+                console.log('delaying', delaying, 'prevState', prevState);
+                if (delaying === false && result && prevState == false) {
                     hue.light.on('Main ' + room);
                     prevState = true;
-                    if (room == 'Kitchen') delayFor(9, 20);
+                    if (room == 'Kitchen') delayFor(5, 22);
                     if (room == 'Bathroom') delayFor(10, 30);
                 } else if (delaying == false && result == false && prevState == true) {
                     hue.light.off('Main ' + room);
                     prevState = false;
                 }
+
+                setTimeout(() => {
+                    lightPresence();
+                }, 2000);
             });
-        
-            // Intermediate brightness when it's getting dark outside
-            if ((isAfterSunrise() && isGettingDark()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
-
-            // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
-            if ((isAfterSunrise() && !isGettingDark()) && (room !== 'Bathroom')) delaying = true;
-
-            // If it's past 2AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
-            if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 2))) hue.light.brightness('Main ' + room, 25);
-
-            // But if it's not yet passed 2AM, keep the lights bright. Someone might still be awake and using them.
-            else if ((isAfterSunset() && !isGettingLight())) hue.light.brightness('Main ' + room, 75);
-
-            // It's almost morning, intermediate brightness
-            if ((isAfterSunset() && isGettingLight())) hue.light.brightness('Main ' + room, 50);
     }
-}, 1000);
+}
 
 setInterval(() => {
     getTime();
@@ -247,7 +304,7 @@ app.post('/', function(req, res) {
             exec('reboot -f');
         }, 1000);
     } else if (body.reboot !== secret.pass) {
-        log('Incorrect password for remote reboot');
+        log('Incorrect password for remote reboot from ' + req.ip);
     }
 
     if (body.keepon) {
@@ -256,44 +313,23 @@ app.post('/', function(req, res) {
         setTimeout(() => {
             delaying = false;
         }, (body.keepon * 60 * 1000));
+
         setTimeout(() => {
-            hue.light.off('Main' + room);
-            setTimeout(() => {
-                hue.light.on('Main' + room);
-            }, 500);
+            blink(room);
+            speak('Time is half up on shower lights');
         }, ((body.keepon - (body.keepon / 2)) * 60 * 1000));
 
         setTimeout(() => {
-            hue.light.off('Main' + room);
-            setTimeout(() => {
-                hue.light.on('Main' + room);
-                setTimeout(() => {
-                    hue.light.off('Main' + room);
-                    setTimeout(() => {
-                        hue.light.on('Main' + room);
-                    }, 500);
-                }, 500);
-            }, 500);
+            blink(room)
+                .then(blink);
+            speak('There is ' + (body.keepon - (body.keepon / 4) * 60 * 1000) + ' minutes left on the shower lights');
         }, ((body.keepon - (body.keepon / 4)) * 60 * 1000));
 
         setTimeout(() => {
-            hue.light.off('Main' + room);
-            setTimeout(() => {
-                hue.light.on('Main' + room);
-                setTimeout(() => {
-                    hue.light.off('Main' + room);
-                    setTimeout(() => {
-                        hue.light.on('Main' + room);
-                        setTimeout(() => {
-                            hue.light.off('Main' + room);
-                            setTimeout(() => {
-                                hue.light.on('Main' + room);
-                            }, 500);
-                        }, 500);
-                    }, 500);
-                }, 500);
-            }, 500);
-        }, body.keepon - (body.keepon - 5));
+            blink(room)
+                .then(blink)
+                .then(blink);
+        }, (body.keepon - (body.keepon - 5)) * 60 * 1000);
     }
 });
 
