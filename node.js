@@ -1,3 +1,5 @@
+// scp ./node.js root@192.168.0.203:"'/root/PIR Sensor/node.js'"
+
 'use strict';
 const exec = require('child_process').exec;
 const hue = require('./hue');
@@ -9,17 +11,18 @@ const secret = require('./secret');
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-let time;
 let sunrise, sunset, goldenHour, goldenHourEnd;
 let lat = 42.562986, long = -92.499992;
 
-let prevState = false;
-let delaying, delayTimeout, delayInterval, room;
+let time;
+let room;
+let sensorPin = "11";
 
 function init(cb) {
     if (hue.ready) {
         assignRoom();
-        exec('fast-gpio set-input 11');
+        exec('gpioctl dirin ' + sensorPin);
+        log("Set up pin " + sensorPin);
         log('Connected to Philips Hue Bridge');
         getSunTimes().then(_ => {
             log('Retrieved sun data and timings');
@@ -31,8 +34,7 @@ function init(cb) {
             hue.light.off('Main ' + room);
             speak(room + ' motion sensor is ready');
         }, 500);
-        delaying = false;
-        lightPresence();
+        presence.init();
         if (typeof cb == 'function') cb();
     } else {
         setTimeout(() => {
@@ -42,16 +44,13 @@ function init(cb) {
 }
 
 function getTime() {
-    return new Promise(resolve => {
-        http.get(secret.mmserverAddress + '/time', function(res) {
-            res.setEncoding('utf8');
-            let rawData = '';
-            res.on('data', (chunk) => { rawData += chunk; });
+    http.get(secret.mmserverAddress + '/time', function(res) {
+        res.setEncoding('utf8');
+        let rawData = '';
+        res.on('data', (chunk) => { rawData += chunk; });
 
-            res.on('end', () => {
-                time = JSON.parse(rawData);
-            });
-            resolve(time);
+        res.on('end', () => {
+            time = JSON.parse(rawData);
         });
     });
 }
@@ -76,7 +75,7 @@ function getSunTimes() {
     });
 }
 
-getTime();
+setInterval(getTime, 2000);
 getSunTimes();
 
 function replaceAll(str, find, replace) {
@@ -96,7 +95,7 @@ function assignRoom() {
     let mac = require('os').networkInterfaces().apcli0[0].mac;
 
     switch (ip) {
-        case '192.168.0.202':
+        case '192.168.0.203':
             room = 'Kitchen';
             break;
         case '192.168.0.201':
@@ -148,14 +147,15 @@ function isAfterSunrise() {
     else return false;
 }
 
-function blink(light) {
-    return new Promise(resolve => {
-        hue.light.off('Main ' + light);
-        setTimeout(() => {
-            hue.light.on('Main ' + light);
-            resolve(light);
-        }, 500);
-    });
+function blink(times) {
+    hue.light.off('Main ' + room);
+    setTimeout(() => {
+        hue.light.on('Main ' + room);
+    }, 500);
+
+    if (time > 1) {
+        blink(times - 1);
+    }
 }
 
 function debounce(func, wait, immediate) {
@@ -219,69 +219,80 @@ function isOnline() {
 
 function hasPresence() {
     if (hue.ready) return new Promise(resolve => {
-        exec('fast-gpio read 11', (err, stdout) => {
+        exec('gpioctl get 11', (err, stdout) => {
             if (err) error(err);
-            stdout = replaceAll(stdout, '> Read GPIO11:', '');
-            console.log('Presence: ' + stdout);
-            if (stdout.includes('1')) {
+            if (stdout.includes('HIGH')) {
                 resolve(true)
             }
-            if (stdout.includes('0')) {
+            if (stdout.includes('LOW')) {
                 resolve(false);
             }
         });
     });
 }
 
-function delayFor(initialDelay, secondaryDelay) {
-    delaying = true;
-    console.log('Delaying for ' + initialDelay + ' seconds');
-    clearTimeout(delayTimeout);
-    clearInterval(delayInterval);
-    delayTimeout = setTimeout(() => {
-        delaying = false;
-        clearInterval(delayInterval);
-    }, initialDelay * 1000);
-
-    setTimeout(() => {
-        delayInterval = setInterval(_ => {
-            if (hue.ready && delaying == true) {
-                hasPresence()
-                    .then(result => {
-                        if (result) {
-                            delayFor(secondaryDelay ? secondaryDelay : initialDelay);
-                        }
-                    })
-            }
-        }, 1000);
-    }, 5000);
-}
-
-function lightPresence() {
-    if (hue.ready) {
-        hasPresence()
-            .then((result) => {
-                console.log('delaying', delaying, 'prevState', prevState);
-                if (delaying === false && result && prevState == false) {
-                    hue.light.on('Main ' + room);
-                    prevState = true;
-                    if (room == 'Kitchen') delayFor(5, 22);
-                    if (room == 'Bathroom') delayFor(10, 30);
-                } else if (delaying == false && result == false && prevState == true) {
-                    hue.light.off('Main ' + room);
-                    prevState = false;
+function recursivePresenceCheck() {
+    hasPresence()
+        .then(isPresent => {
+            if (!isPresent) {
+                if (presence.lastPowerState) {
+                    hue.light.off("Main " + room);
+                    presence.lastPowerState = false;
                 }
+                return;
+            }
 
-                setTimeout(() => {
-                    lightPresence();
-                }, 2000);
-            });
-    }
+
+            // isPresent must be true to get here
+            if (!presence.lastPowerState) {
+                hue.light.on('Main ' + room);
+                presence.lastPowerState = true;
+            }
+
+            switch (room) {
+                case "Kitchen":
+                    presence.delay(presence.recentlyDelayed ? 30 : 10);
+                    break;
+                case "Bathroom":
+                    presence.delay(presence.recentlyDelayed ? 30 : 10);
+                    break;
+                default:
+                    error("Invalid light room name while checking light presence " + room);
+            }
+        });
 }
+
+let presence = {
+    checkTick: undefined,
+    lastPowerState: false,
+    init: function(intervalMS) {
+        if (hue.ready) {
+            presence.checkTick = setInterval(recursivePresenceCheck, intervalMS ? intervalMS : 1000);
+        }
+    },
+    cancel: function() {
+        clearInterval(presence.checkTick);
+    },
+    recentlyDelayed: false,
+    delay: function(seconds) {
+        console.log(`Delaying for ${seconds} seconds`);
+        presence.recentlyDelayed = true;
+
+        presence.cancel();
+        setTimeout(() => {
+            presence.init();
+
+            // 5 second window to turn the light back on and keep it on for longer
+            setTimeout(() => {
+                presence.recentlyDelayed = false;
+            }, 5000);
+        }, seconds * 1000);
+    }
+};
 
 setInterval(() => {
     getTime();
-}, Math.floor(Math.random() * (11000 - 9000 + 1) + 9000));
+}, 5000);
 
 
 setInterval(_ => {
@@ -308,27 +319,29 @@ app.post('/', function(req, res) {
     }
 
     if (body.keepon) {
-        delaying = true;
+        hue.light.on("Main " + room);
+        presence.cancel();
+
         log('Keeping ' + room + ' light on for ' + (body.keepon) + ' minutes');
         setTimeout(() => {
-            delaying = false;
+            presence.init();
         }, (body.keepon * 60 * 1000));
 
+        // Half the time
         setTimeout(() => {
-            blink(room);
-            speak('Time is half up on shower lights');
+            blink(1);
+            speak(`Time is half up on ${room} lights`);
         }, ((body.keepon - (body.keepon / 2)) * 60 * 1000));
 
+        // A quarter of the time
         setTimeout(() => {
-            blink(room)
-                .then(blink);
-            speak('There is ' + (body.keepon - (body.keepon / 4) * 60 * 1000) + ' minutes left on the shower lights');
+            blink(2);
+            speak(`There is ${(body.keepon - (body.keepon / 4) * 60 * 1000)} minutes left on the ${room} lights`);
         }, ((body.keepon - (body.keepon / 4)) * 60 * 1000));
 
+        // A fifth of the time
         setTimeout(() => {
-            blink(room)
-                .then(blink)
-                .then(blink);
+            blink(3);
         }, (body.keepon - (body.keepon - 5)) * 60 * 1000);
     }
 });
