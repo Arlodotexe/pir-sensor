@@ -98,7 +98,7 @@ function assignRoom() {
         case '192.168.0.203':
             room = 'Kitchen';
             break;
-        case '192.168.0.201':
+        case '192.168.0.202':
             room = 'Bathroom';
             break;
         default:
