@@ -145,7 +145,7 @@ function blink(times) {
             hue.light[state1]('Main ' + room);
             setTimeout(() => {
                 hue.light[state2]('Main ' + room);
-                timedOnOff(timesRemaining - 1);
+                if(time > 0) timedOnOff(timesRemaining - 1);
             }, 500);
         }
 
