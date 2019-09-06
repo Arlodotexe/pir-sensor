@@ -25,7 +25,6 @@ function init(cb) {
         log("Set up pin " + sensorPin);
         log('Connected to Philips Hue Bridge');
         getUpdatedSunTimes(() => {
-            log('Retrieved sun data and timings');
             setDynamicBrightness();
         });
 
@@ -41,6 +40,7 @@ function init(cb) {
 }
 
 function updateTime() {
+    log('Getting updated time');
     http.get(secret.mmserverAddress + '/time', function (res) {
         res.setEncoding('utf8');
         let rawData = '';
@@ -53,6 +53,7 @@ function updateTime() {
 }
 
 function getUpdatedSunTimes(cb) {
+    log('Getting sun data');
     http.get(secret.mmserverAddress + '/sundata', function (res) {
         res.setEncoding('utf8');
         let rawData = '';
@@ -65,6 +66,7 @@ function getUpdatedSunTimes(cb) {
             sunrise = body.sunrise;
             goldenHour = body.goldenHour;
             goldenHourEnd = body.goldenHourEnd;
+            log('Retrieved sun data and timings');
             cb(body);
         });
     });
@@ -86,7 +88,7 @@ function assignRoom() {
             room = 'Kitchen';
             break;
         case '192.168.0.202':
-            room = 'Bathroom';
+            room = 'Living room';
             break;
         default:
             error('IP Address is not bound to a room: ' + ip + '.\n Hardware ID is: ' + mac.substr(mac.length - 4));
@@ -105,9 +107,9 @@ const error = function (msg) {
 }
 
 const log = function (msg) {
-    requestify.post(secret.mmserverAddress, {
+    /* requestify.post(secret.mmserverAddress, {
         log: room + ' motion sensor: ' + msg
-    });
+    }); */
     console.log(msg);
 }
 
@@ -138,16 +140,16 @@ function blink(times) {
     hue.light.get.isOn('Main ' + room).then(state => {
         var state1 = (state ? "on" : "off");
         var state2 = (!state ? "on" : "off");
-        function timedOnOff() {
+
+        function timedOnOff(timesRemaining) {
             hue.light[state1]('Main ' + room);
             setTimeout(() => {
                 hue.light[state2]('Main ' + room);
+                timedOnOff(timesRemaining - 1);
             }, 500);
         }
 
-        for (var i = 0; i < times; i++) {
-            timedOnOff();
-        }
+        timedOnOff(time);
 
         setTimeout(() => {
             hue.light[state1]('Main ' + room); // reset to original state
@@ -182,7 +184,7 @@ function setDynamicBrightness() {
 }
 
 function hasPresence() {
-    if (hue.ready) return new Promise(resolve => {
+    return new Promise(resolve => {
         exec('gpioctl get 11', (err, stdout) => {
             if (err) error(err);
             if (stdout.includes('HIGH')) {
@@ -219,7 +221,7 @@ function recursivePresenceCheck() {
             case "Kitchen":
                 presence.delay(presence.recentlyDelayed ? 30 : 10);
                 break;
-            case "Bathroom":
+            case "Living room":
                 presence.delay(presence.recentlyDelayed ? 30 : 10);
                 break;
             default:
@@ -303,15 +305,15 @@ app.post('/', function (req, res) {
 
 app.listen(8080, (err) => {
     init(() => {
+        setInterval(() => {
+            updateTime();
+
+            if (time && time[0] == 12) {
+                getUpdatedSunTimes();
+            }
+        }, 60 * 1000);
+
         if (err) error('Express failed to start the web server');
         log('Listening on port 8080');
     });
 });
-
-setInterval(() => {
-    updateTime();
-
-    if (time && time[0] == 12) {
-        getUpdatedSunTimes();
-    }
-}, 60 * 1000);
