@@ -135,7 +135,7 @@ function isAfterSunrise() {
 }
 
 function blink(times) {
-    hue.light.get.isOn().then(state => {
+    hue.light.get.isOn('Main ' + room).then(state => {
         var state1 = (state ? "on" : "off");
         var state2 = (!state ? "on" : "off");
         function timedOnOff() {
@@ -156,24 +156,29 @@ function blink(times) {
 }
 
 function setDynamicBrightness() {
+    let brightness = 100; // Default is max
+
     // Intermediate brightness when it's getting dark outside
-    if ((isAfterSunrise() && isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
+    if ((isAfterSunrise() && isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) brightness = 75;
 
     // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
     /* if ((isAfterSunrise() && !isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) delaying = true; */
 
     // If it's past 3AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
     if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 3))) {
-        hue.light.brightness('Main ' + room, 25);
+        brightness = 25;
     }
 
     // But if it's not yet passed 3AM, keep the lights bright. Someone might still be awake and using them.
     else if ((isAfterSunset() && !isGettingLight())) {
-        hue.light.brightness('Main ' + room, 75);
+        brightness = 75;
     }
 
     // It's almost morning, intermediate brightness
-    if ((isAfterSunset() && isGettingLight() && !isAfterSunrise())) hue.light.brightness('Main ' + room, 50);
+    if ((isAfterSunset() && isGettingLight() && !isAfterSunrise())) brightness = 50;
+
+    console.log(`Adjusting brightness to ${brightness}`);
+    hue.light.brightness('Main ' + room, brightness); // this is broken
 }
 
 function hasPresence() {
