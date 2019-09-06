@@ -24,16 +24,13 @@ function init(cb) {
         exec('gpioctl dirin ' + sensorPin);
         log("Set up pin " + sensorPin);
         log('Connected to Philips Hue Bridge');
-        getSunTimes().then(_ => {
+        getUpdatedSunTimes(() => {
             log('Retrieved sun data and timings');
-            maintainBrightness();
+            setDynamicBrightness();
         });
 
-        hue.light.on('Main ' + room);
-        setTimeout(() => {
-            hue.light.off('Main ' + room);
-            speak(room + ' motion sensor is ready');
-        }, 500);
+        blink(1);
+        speak(room + ' motion sensor is ready');
         presence.init();
         if (typeof cb == 'function') cb();
     } else {
@@ -43,8 +40,8 @@ function init(cb) {
     }
 }
 
-function getTime() {
-    http.get(secret.mmserverAddress + '/time', function(res) {
+function updateTime() {
+    http.get(secret.mmserverAddress + '/time', function (res) {
         res.setEncoding('utf8');
         let rawData = '';
         res.on('data', (chunk) => { rawData += chunk; });
@@ -55,35 +52,25 @@ function getTime() {
     });
 }
 
-function getSunTimes() {
-    return new Promise(resolve => {
-        http.get(secret.mmserverAddress + '/sundata', function(res) {
-            res.setEncoding('utf8');
-            let rawData = '';
-            res.on('data', (chunk) => { rawData += chunk; });
+function getUpdatedSunTimes(cb) {
+    http.get(secret.mmserverAddress + '/sundata', function (res) {
+        res.setEncoding('utf8');
+        let rawData = '';
+        res.on('data', (chunk) => { rawData += chunk; });
 
-            res.on('end', () => {
-                let body = JSON.parse(rawData);
+        res.on('end', () => {
+            let body = JSON.parse(rawData);
 
-                sunset = body.sunset;
-                sunrise = body.sunrise;
-                goldenHour = body.goldenHour;
-                goldenHourEnd = body.goldenHourEnd;
-                resolve();
-            });
+            sunset = body.sunset;
+            sunrise = body.sunrise;
+            goldenHour = body.goldenHour;
+            goldenHourEnd = body.goldenHourEnd;
+            cb(body);
         });
     });
 }
 
-setInterval(getTime, 2000);
-getSunTimes();
-
-function replaceAll(str, find, replace) {
-    'use strict';
-    return String.raw`${str}`.replace(new RegExp(find.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, '\\$1'), 'g'), replace);
-}
-
-var _slicedToArray = function() { function sliceIterator(arr, i) { var _arr = []; var _n = !0; var _d = !1; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = !0) { _arr.push(_s.value); if (i && _arr.length === i) break } } catch (err) { _d = !0; _e = err } finally { try { if (!_n && _i["return"]) _i["return"]() } finally { if (_d) throw _e } } return _arr } return function(arr, i) { if (Array.isArray(arr)) { return arr } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i) } else { throw new TypeError("Invalid attempt to destructure non-iterable instance") } } }();
+var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = !0; var _d = !1; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = !0) { _arr.push(_s.value); if (i && _arr.length === i) break } } catch (err) { _d = !0; _e = err } finally { try { if (!_n && _i["return"]) _i["return"]() } finally { if (_d) throw _e } } return _arr } return function (arr, i) { if (Array.isArray(arr)) { return arr } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i) } else { throw new TypeError("Invalid attempt to destructure non-iterable instance") } } }();
 function toMilitaryTime(time12h) {
     var _time12h$split = time12h.split(' '), _time12h$split2 = _slicedToArray(_time12h$split, 2), time = _time12h$split2[0], modifier = _time12h$split2[1]; var _time$split = time, _time$split2 = _slicedToArray(_time$split, 2), hours = _time$split2[0], minutes = _time$split2[1]; if (hours === '12') { hours = '00' }
     if (modifier === 'PM') { hours = parseInt(hours, 10) + 12 }
@@ -106,7 +93,7 @@ function assignRoom() {
     }
 }
 
-const error = function(msg) {
+const error = function (msg) {
     console.trace(msg);
     requestify.post(secret.mmserverAddress, {
         error: '(silent)' + room + ' motion sensor: ' + msg
@@ -117,7 +104,7 @@ const error = function(msg) {
     });
 }
 
-const log = function(msg) {
+const log = function (msg) {
     requestify.post(secret.mmserverAddress, {
         log: room + ' motion sensor: ' + msg
     });
@@ -148,73 +135,45 @@ function isAfterSunrise() {
 }
 
 function blink(times) {
-    hue.light.off('Main ' + room);
-    setTimeout(() => {
-        hue.light.on('Main ' + room);
-    }, 500);
+    hue.light.get.isOn().then(state => {
+        var state1 = (state ? "on" : "off");
+        var state2 = (!state ? "on" : "off");
+        function timedOnOff() {
+            hue.light[state1]('Main ' + room);
+            setTimeout(() => {
+                hue.light[state2]('Main ' + room);
+            }, 500);
+        }
 
-    if (time > 1) {
-        blink(times - 1);
-    }
+        for (var i = 0; i < times; i++) {
+            timedOnOff();
+        }
+
+        setTimeout(() => {
+            hue.light[state1]('Main ' + room); // reset to original state
+        }, 500 * times);
+    })
 }
 
-function debounce(func, wait, immediate) {
-    var timeout;
-    return function() {
-        var context = this, args = arguments;
-        var later = function() {
-            timeout = null;
-            if (!immediate) func.apply(context, args);
-        };
-        var callNow = immediate && !timeout;
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-        if (callNow) func.apply(context, args);
-    };
-};
-
-function maintainBrightness() {
+function setDynamicBrightness() {
     // Intermediate brightness when it's getting dark outside
     if ((isAfterSunrise() && isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) hue.light.brightness('Main ' + room, 75);
 
     // Don't turn on the lights (Outside the bathroom) if it's the middle of the day
     /* if ((isAfterSunrise() && !isGettingDark() && !isAfterSunset()) && (room !== 'Bathroom')) delaying = true; */
 
-    // If it's past 2AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
-    if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 2))) {
+    // If it's past 3AM, dim the lights a lot so you don't burn your eyes out using the bathroom or getting a snack
+    if ((isAfterSunset() && !isGettingLight() && (time && toMilitaryTime(time)[0] > 3))) {
         hue.light.brightness('Main ' + room, 25);
     }
 
-    // But if it's not yet passed 2AM, keep the lights bright. Someone might still be awake and using them.
+    // But if it's not yet passed 3AM, keep the lights bright. Someone might still be awake and using them.
     else if ((isAfterSunset() && !isGettingLight())) {
         hue.light.brightness('Main ' + room, 75);
     }
 
     // It's almost morning, intermediate brightness
     if ((isAfterSunset() && isGettingLight() && !isAfterSunrise())) hue.light.brightness('Main ' + room, 50);
-}
-
-function isOnline() {
-    return new Promise(resolve => {
-        debounce(exec('ping -c 1 1.1.1.1', (err, stdout) => {
-            if (err) error(err);
-            if (stdout.includes('0% packet loss')) {
-                resolve(true);
-            } else {
-                log('Device has gone offline. Restarting network server...');
-                debounce(exec('service network restart', () => {
-                    setTimeout(() => {
-                        isOnline().then(result => {
-                            if (!result) {
-                                log('Restarting network service didn\'t work. Forcing a reboot');
-                                exec('reboot -f');
-                            }
-                        });
-                    }, 2000);
-                }), 5000);
-            }
-        }), 5000);
-    });
 }
 
 function hasPresence() {
@@ -231,50 +190,55 @@ function hasPresence() {
     });
 }
 
+/**
+ * @summary Used in a SetInterval to continuously check for a presence
+ */
 function recursivePresenceCheck() {
-    hasPresence()
-        .then(isPresent => {
-            if (!isPresent) {
-                if (presence.lastPowerState) {
-                    hue.light.off("Main " + room);
-                    presence.lastPowerState = false;
-                }
-                return;
+    hasPresence().then(isPresent => {
+        if (!isPresent) {
+            if (presence.lastPowerState) {
+                hue.light.off("Main " + room);
+                presence.lastPowerState = false;
             }
+            return;
+        }
 
+        // isPresent must be true to get here
+        if (!presence.lastPowerState) {
+            hue.light.on('Main ' + room);
+            setDynamicBrightness();
+            presence.lastPowerState = true;
+        }
 
-            // isPresent must be true to get here
-            if (!presence.lastPowerState) {
-                hue.light.on('Main ' + room);
-                presence.lastPowerState = true;
-            }
-
-            switch (room) {
-                case "Kitchen":
-                    presence.delay(presence.recentlyDelayed ? 30 : 10);
-                    break;
-                case "Bathroom":
-                    presence.delay(presence.recentlyDelayed ? 30 : 10);
-                    break;
-                default:
-                    error("Invalid light room name while checking light presence " + room);
-            }
-        });
+        switch (room) {
+            case "Kitchen":
+                presence.delay(presence.recentlyDelayed ? 30 : 10);
+                break;
+            case "Bathroom":
+                presence.delay(presence.recentlyDelayed ? 30 : 10);
+                break;
+            default:
+                error("Invalid light room name while checking light presence " + room);
+        }
+    });
 }
 
 let presence = {
+    /**
+     * @summary Function that periodically executes to check for a presence 
+     */
     checkTick: undefined,
     lastPowerState: false,
-    init: function(intervalMS) {
+    init: function (intervalMS) {
         if (hue.ready) {
             presence.checkTick = setInterval(recursivePresenceCheck, intervalMS ? intervalMS : 1000);
         }
     },
-    cancel: function() {
+    cancel: function () {
         clearInterval(presence.checkTick);
     },
     recentlyDelayed: false,
-    delay: function(seconds) {
+    delay: function (seconds) {
         console.log(`Delaying for ${seconds} seconds`);
         presence.recentlyDelayed = true;
 
@@ -290,23 +254,8 @@ let presence = {
     }
 };
 
-setInterval(() => {
-    getTime();
-}, 5000);
 
-
-setInterval(_ => {
-    if (time && time[0] == 3) delaying = false;
-    if (time && time[0] == 12) {
-        getSunTimes();
-    }
-}, 60 * 1000);
-
-setInterval(_ => {
-    isOnline();
-}, 2 * 60 * 1000);
-
-app.post('/', function(req, res) {
+app.post('/', function (req, res) {
     let body = req.body;
 
     if (body.reboot && body.reboot == secret.pass) {
@@ -353,3 +302,11 @@ app.listen(8080, (err) => {
         log('Listening on port 8080');
     });
 });
+
+setInterval(() => {
+    updateTime();
+
+    if (time && time[0] == 12) {
+        getUpdatedSunTimes();
+    }
+}, 60 * 1000);
