@@ -6,7 +6,6 @@ const hue = require('./hue');
 const requestify = require('requestify');
 const express = require('express'), app = express();
 const bodyParser = require('body-parser');
-const http = require('http');
 const secret = require('./secret');
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
@@ -41,44 +40,46 @@ function init(cb) {
 
 function updateTime() {
     log('Getting updated time');
-    http.get(secret.mmserverAddress + '/time', function (res) {
-        res.setEncoding('utf8');
-        let rawData = '';
-        res.on('data', (chunk) => { rawData += chunk; });
-
-        res.on('end', () => {
-            time = JSON.parse(rawData);
-        });
+    requestify.get(secret.mmserverAddress + '/time').then(function (response) {
+        // Get the response body
+        response = response.getBody();
+        try {
+            let body = JSON.parse();
+            time = body;
+        } catch (err) {
+            error(err);
+        }
     });
 }
 
 function getUpdatedSunTimes(cb) {
     log('Getting sun data');
-    http.get(secret.mmserverAddress + '/sundata', function (res) {
-        res.setEncoding('utf8');
-        let rawData = '';
-        res.on('data', (chunk) => { rawData += chunk; });
 
-        res.on('end', () => {
-            let body = JSON.parse(rawData);
+    requestify.get(secret.mmserverAddress + '/sundata').then(function (response) {
+        // Get the response body
+        response = response.getBody();
+        try {
+            let body = JSON.parse();
 
             sunset = body.sunset;
             sunrise = body.sunrise;
             goldenHour = body.goldenHour;
             goldenHourEnd = body.goldenHourEnd;
-            log('Retrieved sun data and timings');
             cb(body);
-        });
+        } catch (err) {
+            error(err);
+        }
     });
 }
 
+//#region polyfills
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = !0; var _d = !1; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = !0) { _arr.push(_s.value); if (i && _arr.length === i) break } } catch (err) { _d = !0; _e = err } finally { try { if (!_n && _i["return"]) _i["return"]() } finally { if (_d) throw _e } } return _arr } return function (arr, i) { if (Array.isArray(arr)) { return arr } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i) } else { throw new TypeError("Invalid attempt to destructure non-iterable instance") } } }();
 function toMilitaryTime(time12h) {
     var _time12h$split = time12h.split(' '), _time12h$split2 = _slicedToArray(_time12h$split, 2), time = _time12h$split2[0], modifier = _time12h$split2[1]; var _time$split = time, _time$split2 = _slicedToArray(_time$split, 2), hours = _time$split2[0], minutes = _time$split2[1]; if (hours === '12') { hours = '00' }
     if (modifier === 'PM') { hours = parseInt(hours, 10) + 12 }
     return [hours, minutes]
 }
-
+//#endregion
 function assignRoom() {
     let ip = require('os').networkInterfaces().apcli0[0].address;
     let mac = require('os').networkInterfaces().apcli0[0].mac;
@@ -97,26 +98,26 @@ function assignRoom() {
 
 const error = function (msg) {
     console.trace(msg);
-    requestify.post(secret.mmserverAddress, {
-        error: '(silent)' + room + ' motion sensor: ' + msg
-    });
-
-    requestify.post(secret.mmserverAddress, {
-        speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
-    });
+     requestify.post(secret.mmserverAddress, {
+         error: '(silent)' + room + ' motion sensor: ' + msg
+     });
+ 
+     requestify.post(secret.mmserverAddress, {
+         speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
+     });
 }
 
 const log = function (msg) {
-    /* requestify.post(secret.mmserverAddress, {
+    requestify.post(secret.mmserverAddress, {
         log: room + ' motion sensor: ' + msg
-    }); */
+    });
     console.log(msg);
 }
 
 function speak(msg) {
-    requestify.post(secret.mmserverAddress, {
-        say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
-    });
+       requestify.post(secret.mmserverAddress, {
+           say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
+       });
 }
 
 function isGettingDark() {
@@ -145,7 +146,7 @@ function blink(times) {
             hue.light[state1]('Main ' + room);
             setTimeout(() => {
                 hue.light[state2]('Main ' + room);
-                if(time > 0) timedOnOff(timesRemaining - 1);
+                if (time > 0) timedOnOff(timesRemaining - 1);
             }, 500);
         }
 
@@ -245,7 +246,7 @@ let presence = {
         clearInterval(presence.checkTick);
     },
     recentlyDelayed: false,
-    delay: function (seconds) {
+    delay: function (seconds) { // not delaying if presense is found before the light turns back off
         console.log(`Delaying for ${seconds} seconds`);
         presence.recentlyDelayed = true;
 
