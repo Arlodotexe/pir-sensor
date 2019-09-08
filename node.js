@@ -89,7 +89,7 @@ function assignRoom() {
             room = 'Kitchen';
             break;
         case '192.168.0.202':
-            room = 'Living room';
+            room = 'Bathroom';
             break;
         default:
             error('IP Address is not bound to a room: ' + ip + '.\n Hardware ID is: ' + mac.substr(mac.length - 4));
@@ -220,10 +220,10 @@ function recursivePresenceCheck() {
 
         switch (room) {
             case "Kitchen":
-                presence.delay(presence.recentlyDelayed ? 30 : 10);
+                presence.delay(presence.recentlyDelayed ? 60 : 15);
                 break;
-            case "Living room":
-                presence.delay(presence.recentlyDelayed ? 30 : 10);
+            case "Bathroom":
+                presence.delay(presence.recentlyDelayed ? 60 : 10);
                 break;
             default:
                 error("Invalid light room name while checking light presence " + room);
