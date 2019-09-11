@@ -254,10 +254,10 @@ let presence = {
         setTimeout(() => {
             presence.init();
 
-            // 5 second window to turn the light back on and keep it on for longer
+            // 10 second window to turn the light back on and keep it on for longer
             setTimeout(() => {
                 presence.recentlyDelayed = false;
-            }, 5000);
+            }, 10000);
         }, seconds * 1000);
     }
 };
