@@ -29,7 +29,7 @@ function init(cb) {
 
         blink(1);
         speak(room + ' motion sensor is ready');
-        presence.init();
+        presenceCheck.init();
         if (typeof cb == 'function') cb();
     } else {
         setTimeout(() => {
@@ -98,13 +98,13 @@ function assignRoom() {
 
 const error = function (msg) {
     console.trace(msg);
-     requestify.post(secret.mmserverAddress, {
-         error: '(silent)' + room + ' motion sensor: ' + msg
-     });
- 
-     requestify.post(secret.mmserverAddress, {
-         speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
-     });
+    requestify.post(secret.mmserverAddress, {
+        error: '(silent)' + room + ' motion sensor: ' + msg
+    });
+
+    requestify.post(secret.mmserverAddress, {
+        speak: '(noheader)(v:Microsoft Eva Mobile) Something went wrong with the ' + room + ' motion sensor: ' + msg
+    });
 }
 
 const log = function (msg) {
@@ -115,9 +115,9 @@ const log = function (msg) {
 }
 
 function speak(msg) {
-       requestify.post(secret.mmserverAddress, {
-           say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
-       });
+    requestify.post(secret.mmserverAddress, {
+        say: '(noheader)(v:Microsoft Eva Mobile) ' + msg
+    });
 }
 
 function isGettingDark() {
@@ -198,70 +198,114 @@ function hasPresence() {
     });
 }
 
+const presenceCheckTimespans = {
+    "Kitchen": 10,
+    "Bathroom": 10,
+};
+const extendedDelayTimes = {
+    "Kitchen": presenceCheckTimespans["Kitchen"] * 2,
+    "Bathroom": presenceCheckTimespans["Bathroom"] * 1.5,
+};
+
 /**
  * @summary Used in a SetInterval to continuously check for a presence
  */
-function recursivePresenceCheck() {
+function presenceChecker() {
     hasPresence().then(isPresent => {
+        console.log("presenceChecking: " + isPresent);
         if (!isPresent) {
-            if (presence.lastPowerState) {
+            if (presenceCheck.lastPowerState) {
                 hue.light.off("Main " + room);
-                presence.lastPowerState = false;
+                presenceCheck.lastPowerState = false;
             }
             return;
         }
 
         // isPresent must be true to get here
-        if (!presence.lastPowerState) {
+        if (!presenceCheck.lastPowerState) {
             hue.light.on('Main ' + room);
-            setDynamicBrightness();
-            presence.lastPowerState = true;
-        }
+            // Disabled because it always default to 100% and you can't change the brightness from the app
+            //setDynamicBrightness(); 
+            presenceCheck.lastPowerState = true;
 
-        switch (room) {
-            case "Kitchen":
-                presence.delay(presence.recentlyDelayed ? 60 : 15);
-                break;
-            case "Bathroom":
-                presence.delay(presence.recentlyDelayed ? 60 : 10);
-                break;
-            default:
-                error("Invalid light room name while checking light presence " + room);
+            presenceCheck.delay(presenceCheckTimespans[room]);
         }
     });
 }
 
-let presence = {
-    /**
-     * @summary Function that periodically executes to check for a presence 
-     */
-    checkTick: undefined,
-    lastPowerState: false,
-    init: function (intervalMS) {
-        if (hue.ready) {
-            presence.checkTick = setInterval(recursivePresenceCheck, intervalMS ? intervalMS : 1000);
-        }
-    },
-    cancel: function () {
-        clearInterval(presence.checkTick);
-    },
-    recentlyDelayed: false,
-    delay: function (seconds) { // not delaying if presense is found before the light turns back off
-        console.log(`Delaying for ${seconds} seconds`);
-        presence.recentlyDelayed = true;
 
-        presence.cancel();
-        setTimeout(() => {
-            presence.init();
-
-            // 10 second window to turn the light back on and keep it on for longer
-            setTimeout(() => {
-                presence.recentlyDelayed = false;
-            }, 10000);
-        }, seconds * 1000);
+const presenceDelayingCheck = {
+    tick: undefined,
+    interval: () => {
+        hasPresence().then(isPresent => {
+            console.log("presenceDelaying tick: ", isPresent)
+            if (isPresent) {
+                // Reset the timer that restarts normal presence checking
+                console.log(`Delaying restart timer for ${extendedDelayTimes[room]} seconds`);
+                restartPresenceAfterDelayTimer.init(extendedDelayTimes[room]);
+            }
+        });
+    },
+    init: () => {
+        presenceDelayingCheck.clear();
+        presenceDelayingCheck.cleared = false;
+        presenceDelayingCheck.tick = setInterval(presenceDelayingCheck.interval, 1500);
+    },
+    cleared: false,
+    clear: () => {
+        presenceDelayingCheck.cleared = true;
+        clearInterval(presenceDelayingCheck.tick);
     }
 };
 
+
+/**
+ * @summary Function that periodically executes to check for a presence 
+ */
+const presenceCheck = {
+    tick: undefined,
+    lastPowerState: false,
+    init: function (intervalMS) {
+        presenceCheck.recentlyDelayed = false;
+        presenceCheck.clear();
+        presenceCheck.tick = setInterval(presenceChecker, intervalMS ? intervalMS : 2000);
+    },
+    clear: function () {
+        clearInterval(presenceCheck.tick);
+    },
+    recentlyDelayed: false,
+    delay: function (seconds) { // not delaying if presense is found before the light turns back off
+        console.log(`\nDelaying for ${seconds} seconds`);
+        presenceCheck.recentlyDelayed = true;
+
+        // Cancel the main presence checker
+        presenceCheck.clear();
+        // Start the timer to extend the delay when there's presence
+        presenceDelayingCheck.init();
+
+        // Start checking again after X seconds
+        // delay() can get called multiple times, so we need to make this timeout cancelable to restart it when called again
+        restartPresenceAfterDelayTimer.init(seconds);
+    }
+
+};
+
+const restartPresenceAfterDelayTimer = {
+    /** @summary Don't touch the tick outside init and clear */
+    tick: undefined,
+    timeout: () => {
+        console.log("restartPresenceDelay timed out, restarting normal presenceCheck");
+        presenceCheck.init();
+        presenceDelayingCheck.clear();
+    },
+    init: (after) => {
+        restartPresenceAfterDelayTimer.clear();
+        restartPresenceAfterDelayTimer.tick = setTimeout(restartPresenceAfterDelayTimer.timeout, after * 1000);
+    },
+    clear: () => {
+        clearTimeout(restartPresenceAfterDelayTimer.tick);
+    }
+};
 
 app.post('/', function (req, res) {
     let body = req.body;
@@ -277,11 +321,11 @@ app.post('/', function (req, res) {
 
     if (body.keepon) {
         hue.light.on("Main " + room);
-        presence.cancel();
+        presenceCheck.clear();
 
         log('Keeping ' + room + ' light on for ' + (body.keepon) + ' minutes');
         setTimeout(() => {
-            presence.init();
+            presenceCheck.init();
         }, (body.keepon * 60 * 1000));
 
         // Half the time
